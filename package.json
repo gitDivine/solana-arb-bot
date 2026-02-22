@@ -1,0 +1,24 @@
+{
+  "name": "solana-arb-bot",
+  "version": "1.0.0",
+  "description": "Solana cross-DEX arbitrage scanner",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "npx ts-node src/index.ts",
+    "build": "tsc",
+    "scan": "npx ts-node src/index.ts"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "dotenv": "^16.4.0"
+  }
+}

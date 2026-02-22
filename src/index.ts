@@ -5,6 +5,7 @@ import { scanWatchlistToken, detectOpportunities, DetectionResult } from './scan
 import { discoverTokens } from './discovery';
 import { RateLimiter } from './rate-limiter';
 import { initializeExecutor, executeOpportunity, getBotState } from './executor';
+import { getUsdcBalance } from './wallet';
 import {
   logBanner,
   logCycleStart,
@@ -56,9 +57,29 @@ async function runDiscovery(onProgress?: (checked: number, total: number) => voi
 // --- Scanning ---
 
 const USDC = TOKENS.USDC;
-const SCAN_AMOUNT_USDC = 10_000_000; // 10 USDC
+const SCAN_AMOUNT_USDC_FALLBACK = 10_000_000; // 10 USDC fallback
+const PARALLEL_SCAN_COUNT = 3; // scan 3 tokens concurrently
 
-async function runScanCycle(cycleNumber: number): Promise<{
+/** Get scan amount based on actual USDC balance (matches trade size) */
+async function getScanAmount(connection: Connection | null): Promise<number> {
+  if (!connection) return SCAN_AMOUNT_USDC_FALLBACK;
+  try {
+    const balance = await getUsdcBalance(connection);
+    const reserve = EXECUTION_CONFIG.refuelUsdcAmount;
+    const tradeSize = Math.floor(Math.max(0, balance - reserve) * EXECUTION_CONFIG.tradePercentage);
+    // Use actual trade size if we have enough, otherwise fallback to $10
+    return tradeSize > 1_000_000 ? tradeSize : SCAN_AMOUNT_USDC_FALLBACK;
+  } catch {
+    return SCAN_AMOUNT_USDC_FALLBACK;
+  }
+}
+
+async function runScanCycle(
+  cycleNumber: number,
+  connection: Connection | null,
+  executorReady: boolean,
+  onExecuted: () => void,
+): Promise<{
   result: ScanCycleResult;
   opportunities: Opportunity[];
   closestGapBps: number;
@@ -70,33 +91,69 @@ async function runScanCycle(cycleNumber: number): Promise<{
   let bestGapBps = -Infinity;
   let bestGapInfo = '';
   let pairsScanned = 0;
+  let tradedThisCycle = false;
 
-  for (const wt of watchlist) {
-    try {
-      const pair: TradingPair = {
-        tokenA: USDC,
-        tokenB: wt.token,
-        label: `USDC/${wt.token.symbol}`,
-      };
+  // Scan at actual trade size to eliminate false positives
+  const scanAmount = await getScanAmount(connection);
+  const scanAmountUsd = (scanAmount / 1e6).toFixed(2);
 
-      const { forward, reverse } = await scanWatchlistToken(
-        wt, USDC, SCAN_AMOUNT_USDC, jupiterLimiter,
-      );
-      totalQuotes += forward.length + reverse.length;
+  // Process tokens in parallel batches of PARALLEL_SCAN_COUNT
+  for (let i = 0; i < watchlist.length; i += PARALLEL_SCAN_COUNT) {
+    if (tradedThisCycle) break; // stop scanning if we already traded
+
+    const batch = watchlist.slice(i, i + PARALLEL_SCAN_COUNT);
+    const results = await Promise.all(batch.map(async (wt) => {
+      try {
+        const pair: TradingPair = {
+          tokenA: USDC,
+          tokenB: wt.token,
+          label: `USDC/${wt.token.symbol}`,
+        };
+
+        const { forward, reverse } = await scanWatchlistToken(
+          wt, USDC, scanAmount, jupiterLimiter,
+        );
+
+        return { pair, forward, reverse, quotes: forward.length + reverse.length };
+      } catch (err) {
+        logError(`Failed scanning ${wt.token.symbol}: ${err}`);
+        return null;
+      }
+    }));
+
+    for (const r of results) {
+      if (!r) continue;
+      totalQuotes += r.quotes;
       pairsScanned++;
 
-      // Need at least 2 quotes in either direction to compare across DEXes
-      if (forward.length >= 2 || reverse.length >= 2) {
-        const det: DetectionResult = detectOpportunities(pair, forward, reverse);
-        allOpportunities.push(...det.opportunities);
+      if (r.forward.length >= 2 || r.reverse.length >= 2) {
+        const det: DetectionResult = detectOpportunities(r.pair, r.forward, r.reverse);
 
         if (det.closestGapBps > bestGapBps) {
           bestGapBps = det.closestGapBps;
-          bestGapInfo = `${pair.label} ${det.closestGapPair}`;
+          bestGapInfo = `${r.pair.label} ${det.closestGapPair}`;
+        }
+
+        // Immediate execution: try to trade the moment we find a good opportunity
+        for (const opp of det.opportunities) {
+          allOpportunities.push(opp);
+          logOpportunity(opp);
+          logOpportunityToFile(opp);
+
+          if (opp.profitBps >= DISCOVERY_CONFIG.minAlertProfitBps) {
+            sendTelegramAlert(formatOpportunityAlert(opp)).catch(() => {});
+          }
+
+          if (!tradedThisCycle && executorReady && connection && opp.profitBps >= EXECUTION_CONFIG.minExecutionBps) {
+            const execResult = await executeOpportunity(connection, opp);
+            if (execResult) {
+              tradedThisCycle = true;
+              onExecuted();
+              break; // one trade per cycle
+            }
+          }
         }
       }
-    } catch (err) {
-      logError(`Failed scanning ${wt.token.symbol}: ${err}`);
     }
   }
 
@@ -191,29 +248,13 @@ async function main(): Promise<void> {
     cycleNumber++;
     logCycleStart(cycleNumber);
 
-    const { result, opportunities, closestGapBps, closestGapInfo } = await runScanCycle(cycleNumber);
+    const { result, closestGapBps, closestGapInfo } = await runScanCycle(
+      cycleNumber, connection, executorReady, () => { /* onExecuted callback */ },
+    );
     totalOpportunities += result.opportunitiesFound;
 
     logCycleResult(result, closestGapBps, closestGapInfo);
-
-    for (const opp of opportunities) {
-      logOpportunity(opp);
-      logOpportunityToFile(opp);
-    }
-
     logCycleToFile(result);
-
-    for (const opp of opportunities) {
-      if (opp.profitBps >= DISCOVERY_CONFIG.minAlertProfitBps) {
-        await sendTelegramAlert(formatOpportunityAlert(opp));
-      }
-
-      // Attempt execution on the best opportunity (already sorted by profit)
-      if (executorReady && opp.profitBps >= EXECUTION_CONFIG.minExecutionBps) {
-        const execResult = await executeOpportunity(connection, opp);
-        if (execResult) break; // one trade per cycle
-      }
-    }
 
     // If 0 quotes, Jupiter is likely throttling — back off 3 min instead of hammering
     if (result.quotesCollected === 0) {

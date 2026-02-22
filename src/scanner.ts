@@ -127,10 +127,11 @@ export async function scanWatchlistToken(
   const forward: DexQuote[] = [];
   const reverse: DexQuote[] = [];
 
-  // Compute reverse amount: ~$10 worth of the token using DexScreener price
+  // Compute reverse amount: equivalent USD worth of the token using DexScreener price
+  const scanAmountUsd = scanAmount / 1e6; // USDC has 6 decimals
   const avgPrice = Object.values(wt.dexPrices)[0] || 1;
   const tokenUnitsPerDollar = (1 / avgPrice) * Math.pow(10, wt.token.decimals);
-  const revAmount = Math.round(tokenUnitsPerDollar * 10); // ~$10 worth
+  const revAmount = Math.round(tokenUnitsPerDollar * scanAmountUsd);
 
   for (const dex of wt.dexes) {
     await rateLimiter.acquire();

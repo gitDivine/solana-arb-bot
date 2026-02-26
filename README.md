@@ -58,10 +58,18 @@ The bot has multiple safety layers that prevent bad trades:
 | **Auto-refuel** | When SOL (needed for gas/transaction fees) gets low, automatically converts $1 USDC → SOL. |
 | **Dry run mode** | Test the bot without real money by setting `DRY_RUN=true`. |
 
-### Fee Math (Why 0.5%?)
-- Each swap through Jupiter charges a ~0.2% platform fee
-- A round-trip (buy + sell) = ~0.4% in fees
-- The bot only trades at ≥0.5% gap → at least 0.1% net profit per trade
+### Fee Math (Why 0.65%?)
+
+Every trade has three layers of costs. The bot accounts for all of them:
+
+| Cost | Per Trade | Explanation |
+|------|-----------|-------------|
+| Jupiter platform fee | ~0.40% | 0.20% × 2 swaps — automatically deducted from the quotes |
+| Priority fee (gas tip) | ~0.10% | 50,000 lamports × 2 swaps to get fast inclusion (~$0.02 total) |
+| Solana base fee | ~0.015% | Fixed ~$0.003 regardless of trade size |
+| **Total costs** | **~0.515%** | |
+
+The bot sets the minimum gap to **0.65%** (65 basis points), giving a safety buffer of ~0.13% net profit per trade after all fees.
 
 ---
 

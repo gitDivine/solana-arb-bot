@@ -98,11 +98,17 @@ export const CONFIG = {
 };
 
 // --- Execution configuration ---
+// Fee breakdown per round-trip:
+//   Jupiter platform fee: ~20 bps × 2 legs = ~40 bps (already baked into re-quote post-fee outAmount)
+//   Priority fee: 50,000 lamports × 2 = ~$0.02 at $200/SOL ≈ 10 bps on a $21 trade
+//   Solana base tx fee: ~$0.003 total ≈ 1.5 bps
+//   → Min break-even: ~51.5 bps post-Jupiter-fee
+//   → reQuoteMinBps set to 65 = 51.5 + ~13 bps safety buffer
 export const EXECUTION_CONFIG = {
   rpcUrl: process.env.HELIUS_RPC_URL || 'https://api.mainnet-beta.solana.com',
-  minExecutionBps: 50,            // 50 bps minimum to execute (covers ~40bps Jupiter platform fees)
+  minExecutionBps: 65,            // 65 bps scanner threshold (must exceed priority fees + base fees)
   maxPriceImpactPct: 1.0,        // reject quotes with >1% price impact
-  reQuoteMinBps: 50,             // re-quote must still show ≥50 bps
+  reQuoteMinBps: 65,             // re-quote post-Jupiter-fee profit must be ≥65 bps to cover priority fees
   tradePercentage: 1.00,         // use 100% of USDC balance per trade (minus refuel reserve)
   minSolBalance: 10_000_000,     // 0.01 SOL reserved for gas
   refuelSolThreshold: 20_000_000, // 0.02 SOL — trigger USDC→SOL refuel

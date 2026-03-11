@@ -59,6 +59,16 @@ async function main() {
     logger.warn('Wallet', 'ETH balance is very low — top up to cover gas fees');
   }
 
+  // ── Immediate Telegram startup ping ──
+  await logger.sendTelegram(
+    `🟢 Arb Bot Started\n` +
+    `⛓ Chain: Base Mainnet\n` +
+    `📋 Contract: ${CONFIG.wallet.contractAddress.slice(0, 10)}...\n` +
+    `🔋 ETH: ${ethBal.toFixed(4)}\n` +
+    `${CONFIG.dryRun ? '🧪 Mode: DRY RUN' : '🔴 Mode: LIVE'}\n` +
+    `⏳ Connecting to pools...`
+  );
+
   // Discovery run
   await discovery.run();
 
@@ -72,14 +82,11 @@ async function main() {
 
   logger.success('Bot', `Live on Base. Listening for price gaps >= ${CONFIG.arb.minProfitBps}bps across Uniswap V3 + Aerodrome`);
 
-  // ── Telegram startup notification ──
+  // ── Telegram ready notification ──
   await logger.sendTelegram(
-    `🟢 Arb Bot Started\n` +
-    `⛓ Chain: Base Mainnet\n` +
-    `📋 Contract: ${CONFIG.wallet.contractAddress.slice(0, 10)}...\n` +
-    `🔋 ETH: ${ethBal.toFixed(4)}\n` +
+    `✅ Arb Bot Ready\n` +
     `⚙️ Min gap: ${CONFIG.arb.minProfitBps}bps | Flash: $${CONFIG.arb.flashLoanAmount.toLocaleString()}\n` +
-    `${CONFIG.dryRun ? '🧪 Mode: DRY RUN' : '🔴 Mode: LIVE'}`
+    `🔄 Scanning live`
   );
 
   // Stats every 60 seconds + hourly Telegram heartbeat

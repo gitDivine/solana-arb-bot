@@ -13,9 +13,10 @@ import { execSync } from 'child_process';
 function autoUpdate(): void {
   try {
     console.log('[Update] Checking for updates...');
-    const pullResult = execSync('git pull', { encoding: 'utf8', timeout: 15000 }).trim();
+    const pullResultRaw = execSync('git pull', { encoding: 'utf8', timeout: 15000 });
+    const pullResult = pullResultRaw.trim();
     console.log(`[Update] ${pullResult}`);
-    if (pullResult !== 'Already up to date.' && pullResult !== 'Already up-to-date.') {
+    if (!pullResult.toLowerCase().includes('up to date')) {
       console.log('[Update] New code pulled — restarting to apply changes...');
       execSync('npm install --omit=dev', { encoding: 'utf8', timeout: 30000 });
       process.exit(0);
@@ -30,6 +31,7 @@ async function main() {
   const logger = new Logger();
   const rateLimiter = new RateLimiter(30, 1000);
   const wallet = new WalletManager();
+  await wallet.validateAndSwitchRpc();
   const scanner = new Scanner(wallet, logger, rateLimiter);
   const executor = new Executor(wallet, logger);
   const discovery = new Discovery(logger, rateLimiter);

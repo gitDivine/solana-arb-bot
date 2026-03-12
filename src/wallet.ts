@@ -23,28 +23,36 @@ export class WalletManager {
   public contract: ethers.Contract;
 
   constructor() {
-    let httpUrl = CONFIG.chain.rpcHttp;
-    let wsUrl = CONFIG.chain.rpcWs;
-
-    // Zero-Config / Fail-Soft Logic:
-    // If the configured RPC fails or is missing, we use the public Base node.
-    this.httpProvider = new ethers.JsonRpcProvider(httpUrl, 8453, { staticNetwork: true });
-    this.provider = new ethers.WebSocketProvider(wsUrl, 8453, { staticNetwork: true });
-
+    // Only initialize the HTTP provider (lazy-ish)
+    this.httpProvider = new ethers.JsonRpcProvider(CONFIG.chain.rpcHttp, 8453, { staticNetwork: true });
     this.signer = new ethers.Wallet(CONFIG.wallet.privateKey, this.httpProvider);
     this.contract = new ethers.Contract(CONFIG.wallet.contractAddress, ARB_BOT_ABI, this.signer);
+
+    // Initialize provider as null; it will be set in validateAndSwitchRpc after verification
+    this.provider = null as any;
   }
 
   async validateAndSwitchRpc(): Promise<void> {
+    let httpUrl = CONFIG.chain.rpcHttp;
+    let wsUrl = CONFIG.chain.rpcWs;
+
     try {
+      // Test the configured HTTP RPC first
       await this.httpProvider.getNetwork();
+
+      // If HTTP works, attempt to connect WebSocket (this will throw if limited)
+      this.provider = new ethers.WebSocketProvider(wsUrl, 8453, { staticNetwork: true });
+
+      console.log(`[Wallet] Primary RPC connection verified ✓`);
     } catch (err: any) {
       if (err.message.includes('429') || err.message.includes('limit exceeded') || err.message.includes('network')) {
         const fallback = 'https://mainnet.base.org';
         const fallbackWs = 'wss://mainnet.base.org/ws';
         console.warn(`[Wallet] Primary RPC failed or limited. Switching to public fallbacks...`);
+
         this.httpProvider = new ethers.JsonRpcProvider(fallback, 8453, { staticNetwork: true });
         this.provider = new ethers.WebSocketProvider(fallbackWs, 8453, { staticNetwork: true });
+
         this.signer = new ethers.Wallet(CONFIG.wallet.privateKey, this.httpProvider);
         this.contract = new ethers.Contract(CONFIG.wallet.contractAddress, ARB_BOT_ABI, this.signer);
       } else {

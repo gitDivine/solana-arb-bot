@@ -235,8 +235,6 @@ export class Scanner {
         return price;
       }
       else if (type === DexType.UNISWAP_V2 || type === DexType.AERODROME) {
-        // Simple price from reserves for V2
-        // For Aero, we'll use router getAmountsOut for accuracy
         if (type === DexType.AERODROME) {
           const router = new ethers.Contract(CONFIG.dexes.aerodromeRouter, AERO_ROUTER_ABI, this.wallet.provider);
           const amountIn = ethers.parseUnits('1', 6);
@@ -244,11 +242,17 @@ export class Scanner {
           const amounts = await router.getAmountsOut(amountIn, routes);
           return Number(ethers.formatUnits(amounts[amounts.length - 1], dec));
         } else {
-          const v2pool = new ethers.Contract(poolAddr, UNI_V2_POOL_ABI, this.wallet.provider);
+          const v2pool = new ethers.Contract(poolAddr, ['function token0() view returns (address)', 'function getReserves() view returns (uint112, uint112, uint32)'], this.wallet.provider);
+          const token0 = await v2pool.token0();
           const [r0, r1] = await v2pool.getReserves();
-          // Assume USDC is token0 usually, but check
-          // Actually, let's just use router-style math if possible or keep it simple
-          return Number(r1) / Number(r0) * (10 ** (6 - dec));
+
+          let price;
+          if (token0.toLowerCase() === CONFIG.tokens.USDC.toLowerCase()) {
+            price = Number(r1) / Number(r0) * (10 ** (6 - dec));
+          } else {
+            price = Number(r0) / Number(r1) * (10 ** (6 - dec));
+          }
+          return price;
         }
       }
     } catch { return null; }

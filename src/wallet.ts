@@ -39,17 +39,22 @@ export class WalletManager {
     const tryConnect = async (http: string, ws: string): Promise<boolean> => {
       let tempWs: ethers.WebSocketProvider | null = null;
       try {
-        console.log(`[Wallet] Probing HTTP RPC: ${http.slice(0, 30)}...`);
+        console.log(`[Wallet] Probing HTTP RPC: ${http.split('//')[1].split('/')[0]}...`);
         const tempHttp = new ethers.JsonRpcProvider(http, 8453, { staticNetwork: true });
-        await tempHttp.getBlockNumber();
 
-        console.log(`[Wallet] Probing WebSocket RPC: ${ws.slice(0, 30)}...`);
+        // HTTP Timeout race
+        await Promise.race([
+          tempHttp.getBlockNumber(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('HTTP Probe Timeout')), 5000))
+        ]);
+
+        console.log(`[Wallet] Probing WebSocket RPC: ${ws.split('//')[1].split('/')[0]}...`);
         tempWs = new ethers.WebSocketProvider(ws, 8453, { staticNetwork: true });
 
-        // Wait for connection and perform a real request to force handshake
+        // WS Timeout race
         await Promise.race([
           tempWs.getBlockNumber(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('WS Connection Timeout')), 5000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('WS Probe Timeout')), 5000))
         ]);
 
         this.httpProvider = tempHttp;

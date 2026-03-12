@@ -30,8 +30,11 @@ async function main() {
   autoUpdate();
   const logger = new Logger();
   const rateLimiter = new RateLimiter(30, 1000);
+  console.log('[Startup] Initializing WalletManager...');
   const wallet = new WalletManager();
+  console.log('[Startup] Validating RPC connections...');
   await wallet.validateAndSwitchRpc();
+  console.log('[Startup] Initializing Scanner, Executor, and Discovery...');
   const scanner = new Scanner(wallet, logger, rateLimiter);
   const executor = new Executor(wallet, logger);
   const discovery = new Discovery(logger, rateLimiter);

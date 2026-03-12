@@ -34,12 +34,13 @@ export class WalletManager {
 
   async validateAndSwitchRpc(): Promise<void> {
     const fallbackHttp = 'https://mainnet.base.org';
-    const fallbackWs = 'wss://mainnet.base.org/ws';
+    const fallbackWs = 'wss://base.publicnode.com';
 
     const tryConnect = async (http: string, ws: string): Promise<boolean> => {
       let tempWs: ethers.WebSocketProvider | null = null;
       try {
-        console.log(`[Wallet] Probing HTTP RPC: ${http.split('//')[1].split('/')[0]}...`);
+        const hostHttp = http.split('//')[1]?.split('/')[0] || 'RPC';
+        console.log(`[Wallet] Probing HTTP RPC: ${hostHttp}...`);
         const tempHttp = new ethers.JsonRpcProvider(http, 8453, { staticNetwork: true });
 
         // HTTP Timeout race
@@ -48,8 +49,14 @@ export class WalletManager {
           new Promise((_, reject) => setTimeout(() => reject(new Error('HTTP Probe Timeout')), 5000))
         ]);
 
-        console.log(`[Wallet] Probing WebSocket RPC: ${ws.split('//')[1].split('/')[0]}...`);
+        const hostWs = ws.split('//')[1]?.split('/')[0] || 'WS';
+        console.log(`[Wallet] Probing WebSocket RPC: ${hostWs}...`);
         tempWs = new ethers.WebSocketProvider(ws, 8453, { staticNetwork: true });
+
+        // CRITICAL: Catch errors emitted by the WS instance during handshake (like 405)
+        tempWs.on('error', (e) => {
+          // Swallow it here; the catch block or Promise.race will handle the failure
+        });
 
         // WS Timeout race
         await Promise.race([

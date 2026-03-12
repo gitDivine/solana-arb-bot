@@ -1,14 +1,14 @@
-// wallet.ts — EDITED: Solana Keypair → EVM ethers.js wallet
 import { ethers } from 'ethers';
 import { CONFIG } from './config';
+import { SwapLeg } from './types';
 
 // ArbBot contract ABI (only what the bot needs)
 const ARB_BOT_ABI = [
-  'function startArbitrage(address tokenOut, uint256 flashAmount, uint8 direction, uint24 uniPoolFee, uint256 minProfitUsdc) external',
+  'function startArbitrage(address tokenOut, uint256 flashAmount, (address router, uint8 dexType, uint24 fee, bool stable, address factory) leg1, (address router, uint8 dexType, uint24 fee, bool stable, address factory) leg2, uint256 minProfitUsdc) external',
   'function withdrawToken(address token) external',
   'function withdrawEth() external',
   'function owner() view returns (address)',
-  'event ArbitrageExecuted(address tokenOut, uint256 profit, uint8 direction)',
+  'event ArbitrageExecuted(address tokenOut, uint256 profit, address router1, address router2)',
 ];
 
 const ERC20_ABI = [
@@ -48,15 +48,15 @@ export class WalletManager {
   async executeArbitrage(
     tokenOut: string,
     flashAmount: number,
-    direction: 1 | 2,
-    uniPoolFee: number,
+    leg1: SwapLeg,
+    leg2: SwapLeg,
     minProfitUsdc: number
   ): Promise<{ txHash: string; gasUsed: number }> {
     const flashAmountWei = ethers.parseUnits(flashAmount.toString(), 6);
     const minProfitWei = ethers.parseUnits(minProfitUsdc.toString(), 6);
 
     const data = this.contract.interface.encodeFunctionData('startArbitrage', [
-      tokenOut, flashAmountWei, direction, uniPoolFee, minProfitWei
+      tokenOut, flashAmountWei, leg1, leg2, minProfitWei
     ]);
 
     const tx = await this.signer.sendTransaction({

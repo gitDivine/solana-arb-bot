@@ -48,7 +48,7 @@ export class Executor {
     try {
       this.logger.info('Executor',
         `Firing flash loan: ${opp.tokenName} | ${opp.gapBps}bps | $${opp.flashAmount.toLocaleString()} | ` +
-        `direction: ${opp.direction === 1 ? 'Buy Uni→Sell Aero' : 'Buy Aero→Sell Uni'}`
+        `leg1: ${opp.leg1.router.slice(0, 8)}... → leg2: ${opp.leg2.router.slice(0, 8)}...`
       );
 
       if (CONFIG.dryRun) {
@@ -60,8 +60,8 @@ export class Executor {
       const { txHash, gasUsed } = await this.wallet.executeArbitrage(
         opp.tokenOut,
         opp.flashAmount,
-        opp.direction,
-        opp.uniPoolFee,
+        opp.leg1,
+        opp.leg2,
         CONFIG.arb.minProfitUsdc
       );
 

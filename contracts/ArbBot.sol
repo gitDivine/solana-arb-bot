@@ -15,6 +15,10 @@ interface IAavePool {
     function flashLoanSimple(address receiverAddress, address asset, uint256 amount, bytes calldata params, uint16 referralCode) external;
 }
 
+interface IUniswapV2Router {
+    function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts);
+}
+
 interface IUniswapV3Router {
     struct ExactInputSingleParams {
         address tokenIn; address tokenOut; uint24 fee; address recipient;
@@ -31,81 +35,96 @@ interface IAerodromeRouter {
 contract ArbBot is IFlashLoanSimpleReceiver {
     address public immutable owner;
     IAavePool  constant AAVE_POOL  = IAavePool(0xA238Dd80C259a72e81d7e4664a9801593F98d1c5);
-    IUniswapV3Router constant UNI  = IUniswapV3Router(0x2626664c2603336E57B271c5C0b26F421741e481);
-    IAerodromeRouter constant AERO = IAerodromeRouter(0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43);
-    address constant AERO_FACTORY  = 0x420DD381b31aEf6683db6B902084cB0FFECe40Da;
     address constant USDC          = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
 
-    uint8 constant BUY_UNI_SELL_AERO = 1;
-    uint8 constant BUY_AERO_SELL_UNI = 2;
+    enum DexType { UNISWAP_V2, UNISWAP_V3, AERODROME }
 
-    event ArbitrageExecuted(address tokenOut, uint256 profit, uint8 direction);
+    struct SwapLeg {
+        address router;
+        DexType dexType;
+        uint24 fee;     // For V3 (e.g. 500, 3000)
+        bool stable;    // For Aerodrome
+        address factory; // For Aerodrome route
+    }
+
+    event ArbitrageExecuted(address tokenOut, uint256 profit, address router1, address router2);
     event ProfitWithdrawn(address token, uint256 amount);
 
     modifier onlyOwner() { require(msg.sender == owner, "Not owner"); _; }
     constructor() { owner = msg.sender; }
 
-    function startArbitrage(address tokenOut, uint256 flashAmount, uint8 direction, uint24 uniPoolFee, uint256 minProfitUsdc) external onlyOwner {
-        bytes memory params = abi.encode(tokenOut, direction, uniPoolFee, minProfitUsdc);
+    function startArbitrage(
+        address tokenOut, 
+        uint256 flashAmount, 
+        SwapLeg calldata leg1, 
+        SwapLeg calldata leg2, 
+        uint256 minProfitUsdc
+    ) external onlyOwner {
+        bytes memory params = abi.encode(tokenOut, leg1, leg2, minProfitUsdc);
         AAVE_POOL.flashLoanSimple(address(this), USDC, flashAmount, params, 0);
     }
 
-    function executeOperation(address, uint256 amount, uint256 premium, address initiator, bytes calldata params) external override returns (bool) {
+    function executeOperation(
+        address, 
+        uint256 amount, 
+        uint256 premium, 
+        address initiator, 
+        bytes calldata params
+    ) external override returns (bool) {
         require(msg.sender == address(AAVE_POOL), "Untrusted caller");
         require(initiator == address(this), "Untrusted initiator");
-        (address tokenOut, uint8 direction, uint24 uniPoolFee, ) = abi.decode(params, (address, uint8, uint24, uint256));
+
+        (address tokenOut, SwapLeg memory leg1, SwapLeg memory leg2, ) = abi.decode(params, (address, SwapLeg, SwapLeg, uint256));
+        
         uint256 repayAmount = amount + premium;
-        uint256 finalUsdc;
-        if (direction == BUY_UNI_SELL_AERO) {
-            finalUsdc = _buyUniSellAero(amount, tokenOut, uniPoolFee);
-        } else {
-            finalUsdc = _buyAeroSellUni(amount, tokenOut, uniPoolFee);
-        }
+        
+        // Step 1: Buy tokenOut with USDC using Leg 1
+        uint256 tokenAmount = _swap(leg1, USDC, tokenOut, amount);
+        
+        // Step 2: Sell tokenOut back to USDC using Leg 2
+        uint256 finalUsdc = _swap(leg2, tokenOut, USDC, tokenAmount);
+
         require(finalUsdc >= repayAmount, "Cannot repay loan");
+        
         IERC20(USDC).approve(address(AAVE_POOL), repayAmount);
-        emit ArbitrageExecuted(tokenOut, finalUsdc - repayAmount, direction);
+        
+        emit ArbitrageExecuted(tokenOut, finalUsdc - repayAmount, leg1.router, leg2.router);
         return true;
     }
 
-    function _buyUniSellAero(uint256 usdcIn, address tokenOut, uint24 fee) internal returns (uint256) {
-        IERC20(USDC).approve(address(UNI), usdcIn);
-        uint256 tokenAmount = UNI.exactInputSingle(IUniswapV3Router.ExactInputSingleParams({
-            tokenIn: USDC, tokenOut: tokenOut, fee: fee, recipient: address(this),
-            amountIn: usdcIn, amountOutMinimum: 0, sqrtPriceLimitX96: 0
-        }));
-        return _aeroSwap(tokenOut, USDC, tokenAmount);
-    }
+    function _swap(SwapLeg memory leg, address from, address to, uint256 amountIn) internal returns (uint256) {
+        IERC20(from).approve(leg.router, amountIn);
 
-    function _buyAeroSellUni(uint256 usdcIn, address tokenOut, uint24 fee) internal returns (uint256) {
-        uint256 tokenAmount = _aeroSwap(USDC, tokenOut, usdcIn);
-        IERC20(tokenOut).approve(address(UNI), tokenAmount);
-        return UNI.exactInputSingle(IUniswapV3Router.ExactInputSingleParams({
-            tokenIn: tokenOut, tokenOut: USDC, fee: fee, recipient: address(this),
-            amountIn: tokenAmount, amountOutMinimum: 0, sqrtPriceLimitX96: 0
-        }));
-    }
-
-    function _aeroSwap(address from, address to, uint256 amountIn) internal returns (uint256) {
-        IERC20(from).approve(address(AERO), amountIn);
-        IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
-        
-        // Try volatile pool first (stable: false)
-        routes[0] = IAerodromeRouter.Route({ 
-            from: from, 
-            to: to, 
-            stable: false,  // Volatile pool
-            factory: AERO_FACTORY 
-        });
-        
-        try AERO.swapExactTokensForTokens(
-            amountIn, 0, routes, address(this), block.timestamp + 60
-        ) returns (uint256[] memory amounts) {
-            return amounts[amounts.length - 1];
-        } catch {
-            // Fallback: try stable pool
-            routes[0].stable = true;
-            uint256[] memory amounts = AERO.swapExactTokensForTokens(
+        if (leg.dexType == DexType.UNISWAP_V3) {
+            return IUniswapV3Router(leg.router).exactInputSingle(IUniswapV3Router.ExactInputSingleParams({
+                tokenIn: from,
+                tokenOut: to,
+                fee: leg.fee,
+                recipient: address(this),
+                amountIn: amountIn,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            }));
+        } 
+        else if (leg.dexType == DexType.AERODROME) {
+            IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
+            routes[0] = IAerodromeRouter.Route({ 
+                from: from, 
+                to: to, 
+                stable: leg.stable,
+                factory: leg.factory
+            });
+            uint256[] memory amounts = IAerodromeRouter(leg.router).swapExactTokensForTokens(
                 amountIn, 0, routes, address(this), block.timestamp + 60
+            );
+            return amounts[amounts.length - 1];
+        }
+        else { // UNISWAP_V2
+            address[] memory path = new address[](2);
+            path[0] = from;
+            path[1] = to;
+            uint256[] memory amounts = IUniswapV2Router(leg.router).swapExactTokensForTokens(
+                amountIn, 0, path, address(this), block.timestamp + 60
             );
             return amounts[amounts.length - 1];
         }

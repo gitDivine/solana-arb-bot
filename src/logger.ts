@@ -1,7 +1,7 @@
 // logger.ts — KEPT (structure unchanged, updated labels for Base)
 import axios from 'axios';
 import { CONFIG } from './config';
-import { ArbOpportunity } from './types';
+import { ArbOpportunity, DexType } from './types';
 
 type Level = 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS' | 'DEBUG';
 
@@ -19,10 +19,19 @@ export class Logger {
   debug(tag: string, msg: string) { if (process.env.DEBUG) this.log('DEBUG', tag, msg); }
 
   opportunity(opp: ArbOpportunity): void {
-    const dir = opp.direction === 1 ? 'Uni→Aero' : 'Aero→Uni';
-    const msg = `🎯 ARB FOUND | ${opp.tokenName} | ${opp.gapBps}bps | ~$${opp.estimatedProfit.toFixed(2)} profit | ${dir}`;
+    const route = `${this.getDexName(opp.leg1.dexType)} ↔ ${this.getDexName(opp.leg2.dexType)}`;
+    const msg = `🎯 ARB FOUND | ${opp.tokenName} | ${opp.gapBps}bps | ~$${opp.estimatedProfit.toFixed(2)} profit | ${route}`;
     this.log('SUCCESS', 'Opportunity', msg);
     this.sendTelegram(msg);
+  }
+
+  private getDexName(type: DexType): string {
+    switch (type) {
+      case DexType.UNISWAP_V3: return 'UniV3';
+      case DexType.AERODROME: return 'Aero';
+      case DexType.UNISWAP_V2: return 'V2';
+      default: return 'DEX';
+    }
   }
 
   private log(level: Level, tag: string, msg: string): void {

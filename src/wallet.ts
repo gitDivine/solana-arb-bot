@@ -32,100 +32,99 @@ export class WalletManager {
     this.provider = null as any;
   }
 
-  async validateAndSwitchRpc(): Promise<void> {
-    const fallbackHttp = 'https://mainnet.base.org';
-    const fallbackWs = 'wss://mainnet.base.org/ws';
+  const tryConnect = async (http: string, ws: string): Promise<boolean> => {
+    try {
+      console.log(`[Wallet] Probing HTTP RPC...`);
+      const tempHttp = new ethers.JsonRpcProvider(http, 8453, { staticNetwork: true });
+      await tempHttp.getBlockNumber(); // Real request
 
-    const tryConnect = async (http: string, ws: string): Promise<boolean> => {
-      try {
-        console.log(`[Wallet] Probing HTTP RPC: ${http.slice(0, 30)}...`);
-        const tempHttp = new ethers.JsonRpcProvider(http, 8453, { staticNetwork: true });
-        await tempHttp.getNetwork();
+      console.log(`[Wallet] Probing WebSocket RPC...`);
+      const tempWs = new ethers.WebSocketProvider(ws, 8453, { staticNetwork: true });
 
-        console.log(`[Wallet] Probing WebSocket RPC: ${ws.slice(0, 30)}...`);
-        // Wrap WS in a way that catches handshake failures
-        const tempWs = new ethers.WebSocketProvider(ws, 8453, { staticNetwork: true });
-        await tempWs.getNetwork();
+      // Wait for connection and perform a real request
+      await Promise.race([
+        tempWs.getBlockNumber(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('WS Timeout')), 5000))
+      ]);
 
-        // If we reach here, both work. 
-        this.httpProvider = tempHttp;
-        this.provider = tempWs;
-        return true;
-      } catch (err: any) {
-        const msg = err.message || String(err);
-        console.warn(`[Wallet] RPC Probe failed for ${http.slice(0, 20)}: ${msg}`);
-        return false;
-      }
-    };
-
-    // 1. Try configured RPC first
-    const primaryOk = await tryConnect(CONFIG.chain.rpcHttp, CONFIG.chain.rpcWs);
-
-    // 2. If failed, switch to fallback
-    if (!primaryOk) {
-      console.warn(`[Wallet] Switching to public fallbacks due to primary failure...`);
-      const fallbackOk = await tryConnect(fallbackHttp, fallbackWs);
-
-      if (!fallbackOk) {
-        console.error(`[Wallet] CRITICAL: Even public fallback RPC failed. Check your internet connection.`);
-        throw new Error('No working RPC found');
-      }
+      this.httpProvider = tempHttp;
+      this.provider = tempWs;
+      return true;
+    } catch (err: any) {
+      const msg = err.message || String(err);
+      console.warn(`[Wallet] RPC Probe failed: ${msg.slice(0, 100)}`);
+      return false;
     }
+  };
+
+  // 1. Try configured RPC first
+  const primaryOk = await tryConnect(CONFIG.chain.rpcHttp, CONFIG.chain.rpcWs);
+
+  // 2. If failed, switch to fallback
+  if(!primaryOk) {
+    console.warn(`[Wallet] Switching to public fallbacks due to primary failure...`);
+    const fallbackOk = await tryConnect(fallbackHttp, fallbackWs);
+
+    if (!fallbackOk) {
+      console.error(`[Wallet] CRITICAL: Even public fallback RPC failed. Check your internet connection.`);
+      throw new Error('No working RPC found');
+    }
+  }
 
     // 3. Re-init signer and contract with whichever provider is now active
     this.signer = new ethers.Wallet(CONFIG.wallet.privateKey, this.httpProvider);
-    this.contract = new ethers.Contract(CONFIG.wallet.contractAddress, ARB_BOT_ABI, this.signer);
-    console.log(`[Wallet] RPC initialization complete ✓`);
+this.contract = new ethers.Contract(CONFIG.wallet.contractAddress, ARB_BOT_ABI, this.signer);
+console.log(`[Wallet] RPC initialization complete ✓`);
   }
 
-  async getUsdcBalance(): Promise<number> {
-    const usdc = new ethers.Contract(CONFIG.tokens.USDC, ERC20_ABI, this.httpProvider);
-    const bal = await usdc.balanceOf(this.signer.address);
-    return Number(ethers.formatUnits(bal, 6));
-  }
+  async getUsdcBalance(): Promise < number > {
+  const usdc = new ethers.Contract(CONFIG.tokens.USDC, ERC20_ABI, this.httpProvider);
+  const bal = await usdc.balanceOf(this.signer.address);
+  return Number(ethers.formatUnits(bal, 6));
+}
 
-  async getEthBalance(): Promise<number> {
-    const bal = await this.httpProvider.getBalance(this.signer.address);
-    return Number(ethers.formatEther(bal));
-  }
+  async getEthBalance(): Promise < number > {
+  const bal = await this.httpProvider.getBalance(this.signer.address);
+  return Number(ethers.formatEther(bal));
+}
 
-  async getGasPrice(): Promise<number> {
-    const fee = await this.httpProvider.getFeeData();
-    return Number(ethers.formatUnits(fee.gasPrice || 0n, 'gwei'));
-  }
+  async getGasPrice(): Promise < number > {
+  const fee = await this.httpProvider.getFeeData();
+  return Number(ethers.formatUnits(fee.gasPrice || 0n, 'gwei'));
+}
 
   async executeArbitrage(
-    tokenOut: string,
-    flashAmount: number,
-    leg1: SwapLeg,
-    leg2: SwapLeg,
-    minProfitUsdc: number
-  ): Promise<{ txHash: string; gasUsed: number }> {
-    const flashAmountWei = ethers.parseUnits(flashAmount.toString(), 6);
-    const minProfitWei = ethers.parseUnits(minProfitUsdc.toString(), 6);
+  tokenOut: string,
+  flashAmount: number,
+  leg1: SwapLeg,
+  leg2: SwapLeg,
+  minProfitUsdc: number
+): Promise < { txHash: string; gasUsed: number } > {
+  const flashAmountWei = ethers.parseUnits(flashAmount.toString(), 6);
+  const minProfitWei = ethers.parseUnits(minProfitUsdc.toString(), 6);
 
-    const data = this.contract.interface.encodeFunctionData('startArbitrage', [
-      tokenOut, flashAmountWei, leg1, leg2, minProfitWei
-    ]);
+  const data = this.contract.interface.encodeFunctionData('startArbitrage', [
+    tokenOut, flashAmountWei, leg1, leg2, minProfitWei
+  ]);
 
-    const tx = await this.signer.sendTransaction({
-      to: CONFIG.wallet.contractAddress,
-      data: data,
-      gasLimit: 2_000_000,
-    });
+  const tx = await this.signer.sendTransaction({
+    to: CONFIG.wallet.contractAddress,
+    data: data,
+    gasLimit: 2_000_000,
+  });
 
-    const receipt = await tx.wait();
-    return {
-      txHash: receipt!.hash,
-      gasUsed: Number(receipt!.gasUsed),
-    };
-  }
+  const receipt = await tx.wait();
+  return {
+    txHash: receipt!.hash,
+    gasUsed: Number(receipt!.gasUsed),
+  };
+}
 
-  getERC20Contract(address: string): ethers.Contract {
-    return new ethers.Contract(address, ERC20_ABI, this.httpProvider);
-  }
+getERC20Contract(address: string): ethers.Contract {
+  return new ethers.Contract(address, ERC20_ABI, this.httpProvider);
+}
 
-  reconnectWs(): void {
-    this.provider = new ethers.WebSocketProvider(CONFIG.chain.rpcWs, 8453, { staticNetwork: true });
-  }
+reconnectWs(): void {
+  this.provider = new ethers.WebSocketProvider(CONFIG.chain.rpcWs, 8453, { staticNetwork: true });
+}
 }

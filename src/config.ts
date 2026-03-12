@@ -3,8 +3,8 @@ export const CONFIG = {
   chain: {
     name: 'Base Mainnet',
     chainId: 8453,
-    rpcHttp: process.env.BASE_HTTP_URL || '',
-    rpcWs: process.env.BASE_WS_URL || '',
+    rpcHttp: process.env.BASE_HTTP_URL || 'https://mainnet.base.org',
+    rpcWs: process.env.BASE_WS_URL || 'wss://mainnet.base.org/ws',
   },
   wallet: {
     privateKey: process.env.PRIVATE_KEY || '',

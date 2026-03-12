@@ -142,3 +142,23 @@ main().catch(err => {
   console.error('Fatal error:', err.message);
   process.exit(1);
 });
+
+// ── Global Error Handlers ────────────────────────────────────
+// Catch 429s or other connection issues that bubble up after start
+process.on('unhandledRejection', (reason: any) => {
+  const msg = reason?.message || String(reason);
+  if (msg.includes('429') || msg.includes('limit exceeded')) {
+    console.error(`[Fatal] RPC 429 detected. PM2 will restart with fallbacks.`);
+    process.exit(1);
+  }
+  console.error('Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (err: Error) => {
+  if (err.message.includes('429') || err.message.includes('limit exceeded')) {
+    console.error(`[Fatal] RPC 429 detected (Exception). PM2 will restart.`);
+    process.exit(1);
+  }
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
+});

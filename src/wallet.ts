@@ -33,32 +33,49 @@ export class WalletManager {
   }
 
   async validateAndSwitchRpc(): Promise<void> {
-    let httpUrl = CONFIG.chain.rpcHttp;
-    let wsUrl = CONFIG.chain.rpcWs;
+    const fallbackHttp = 'https://mainnet.base.org';
+    const fallbackWs = 'wss://mainnet.base.org/ws';
 
-    try {
-      // Test the configured HTTP RPC first
-      await this.httpProvider.getNetwork();
+    const tryConnect = async (http: string, ws: string): Promise<boolean> => {
+      try {
+        console.log(`[Wallet] Probing HTTP RPC: ${http.slice(0, 30)}...`);
+        const tempHttp = new ethers.JsonRpcProvider(http, 8453, { staticNetwork: true });
+        await tempHttp.getNetwork();
 
-      // If HTTP works, attempt to connect WebSocket (this will throw if limited)
-      this.provider = new ethers.WebSocketProvider(wsUrl, 8453, { staticNetwork: true });
+        console.log(`[Wallet] Probing WebSocket RPC: ${ws.slice(0, 30)}...`);
+        // Wrap WS in a way that catches handshake failures
+        const tempWs = new ethers.WebSocketProvider(ws, 8453, { staticNetwork: true });
+        await tempWs.getNetwork();
 
-      console.log(`[Wallet] Primary RPC connection verified ✓`);
-    } catch (err: any) {
-      if (err.message.includes('429') || err.message.includes('limit exceeded') || err.message.includes('network')) {
-        const fallback = 'https://mainnet.base.org';
-        const fallbackWs = 'wss://mainnet.base.org/ws';
-        console.warn(`[Wallet] Primary RPC failed or limited. Switching to public fallbacks...`);
+        // If we reach here, both work. 
+        this.httpProvider = tempHttp;
+        this.provider = tempWs;
+        return true;
+      } catch (err: any) {
+        const msg = err.message || String(err);
+        console.warn(`[Wallet] RPC Probe failed for ${http.slice(0, 20)}: ${msg}`);
+        return false;
+      }
+    };
 
-        this.httpProvider = new ethers.JsonRpcProvider(fallback, 8453, { staticNetwork: true });
-        this.provider = new ethers.WebSocketProvider(fallbackWs, 8453, { staticNetwork: true });
+    // 1. Try configured RPC first
+    const primaryOk = await tryConnect(CONFIG.chain.rpcHttp, CONFIG.chain.rpcWs);
 
-        this.signer = new ethers.Wallet(CONFIG.wallet.privateKey, this.httpProvider);
-        this.contract = new ethers.Contract(CONFIG.wallet.contractAddress, ARB_BOT_ABI, this.signer);
-      } else {
-        throw err;
+    // 2. If failed, switch to fallback
+    if (!primaryOk) {
+      console.warn(`[Wallet] Switching to public fallbacks due to primary failure...`);
+      const fallbackOk = await tryConnect(fallbackHttp, fallbackWs);
+
+      if (!fallbackOk) {
+        console.error(`[Wallet] CRITICAL: Even public fallback RPC failed. Check your internet connection.`);
+        throw new Error('No working RPC found');
       }
     }
+
+    // 3. Re-init signer and contract with whichever provider is now active
+    this.signer = new ethers.Wallet(CONFIG.wallet.privateKey, this.httpProvider);
+    this.contract = new ethers.Contract(CONFIG.wallet.contractAddress, ARB_BOT_ABI, this.signer);
+    console.log(`[Wallet] RPC initialization complete ✓`);
   }
 
   async getUsdcBalance(): Promise<number> {

@@ -74,7 +74,7 @@ contract ArbBot is IFlashLoanSimpleReceiver {
         require(msg.sender == address(AAVE_POOL), "Untrusted caller");
         require(initiator == address(this), "Untrusted initiator");
 
-        (address tokenOut, SwapLeg memory leg1, SwapLeg memory leg2, ) = abi.decode(params, (address, SwapLeg, SwapLeg, uint256));
+        (address tokenOut, SwapLeg memory leg1, SwapLeg memory leg2, uint256 minProfitUsdc) = abi.decode(params, (address, SwapLeg, SwapLeg, uint256));
         
         uint256 repayAmount = amount + premium;
         
@@ -85,10 +85,12 @@ contract ArbBot is IFlashLoanSimpleReceiver {
         uint256 finalUsdc = _swap(leg2, tokenOut, USDC, tokenAmount);
 
         require(finalUsdc >= repayAmount, "Cannot repay loan");
+        uint256 profit = finalUsdc - repayAmount;
+        require(profit >= minProfitUsdc, "Insufficient profit");
         
         IERC20(USDC).approve(address(AAVE_POOL), repayAmount);
         
-        emit ArbitrageExecuted(tokenOut, finalUsdc - repayAmount, leg1.router, leg2.router);
+        emit ArbitrageExecuted(tokenOut, profit, leg1.router, leg2.router);
         return true;
     }
 

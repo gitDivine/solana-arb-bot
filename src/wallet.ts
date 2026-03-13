@@ -32,10 +32,34 @@ export class WalletManager {
     this.provider = null as any;
   }
 
-  async validateAndSwitchRpc(): Promise<void> {
-    const fallbackHttp = 'https://mainnet.base.org';
-    const fallbackWs = 'wss://base.publicnode.com';
+  const PUBLIC_HTTP_FALLBACKS = [
+    'https://mainnet.base.org',
+    'https://base.publicnode.com',
+    'https://1rpc.io/base'
+  ];
 
+  const PUBLIC_WS_FALLBACKS = [
+    'wss://base.publicnode.com',
+    'wss://mainnet.base.org/ws',
+    'wss://base.drpc.org'
+  ];
+
+export class WalletManager {
+  public provider: ethers.WebSocketProvider;
+  private httpProvider: ethers.JsonRpcProvider;
+  public signer: ethers.Wallet;
+  public contract: ethers.Contract;
+  private workingWs: string = CONFIG.chain.rpcWs;
+  private workingHttp: string = CONFIG.chain.rpcHttp;
+
+  constructor() {
+    this.httpProvider = new ethers.JsonRpcProvider(CONFIG.chain.rpcHttp, 8453, { staticNetwork: true });
+    this.signer = new ethers.Wallet(CONFIG.wallet.privateKey, this.httpProvider);
+    this.contract = new ethers.Contract(CONFIG.wallet.contractAddress, ARB_BOT_ABI, this.signer);
+    this.provider = null as any;
+  }
+
+  async validateAndSwitchRpc(): Promise<void> {
     const tryConnect = async (http: string, ws: string): Promise<boolean> => {
       let tempWs: ethers.WebSocketProvider | null = null;
       try {
@@ -43,7 +67,6 @@ export class WalletManager {
         console.log(`[Wallet] Probing HTTP RPC: ${hostHttp}...`);
         const tempHttp = new ethers.JsonRpcProvider(http, 8453, { staticNetwork: true });
 
-        // HTTP Timeout race
         await Promise.race([
           tempHttp.getBlockNumber(),
           new Promise((_, reject) => setTimeout(() => reject(new Error('HTTP Probe Timeout')), 5000))
@@ -52,13 +75,8 @@ export class WalletManager {
         const hostWs = ws.split('//')[1]?.split('/')[0] || 'WS';
         console.log(`[Wallet] Probing WebSocket RPC: ${hostWs}...`);
         tempWs = new ethers.WebSocketProvider(ws, 8453, { staticNetwork: true });
+        tempWs.on('error', () => { });
 
-        // CRITICAL: Catch errors emitted by the WS instance during handshake (like 405)
-        tempWs.on('error', (e) => {
-          // Swallow it here; the catch block or Promise.race will handle the failure
-        });
-
-        // WS Timeout race
         await Promise.race([
           tempWs.getBlockNumber(),
           new Promise((_, reject) => setTimeout(() => reject(new Error('WS Probe Timeout')), 5000))
@@ -66,30 +84,34 @@ export class WalletManager {
 
         this.httpProvider = tempHttp;
         this.provider = tempWs;
+        this.workingHttp = http;
+        this.workingWs = ws;
         return true;
       } catch (err: any) {
-        const msg = err.message || String(err);
-        console.warn(`[Wallet] RPC Probe failed: ${msg.slice(0, 100)}`);
+        console.warn(`[Wallet] Probe failed for ${http.split('//')[1]?.split('/')[0]}: ${err.message?.slice(0, 50)}`);
         if (tempWs) try { tempWs.destroy(); } catch { }
         return false;
       }
     };
 
-    // 1. Try configured RPC first
-    const primaryOk = await tryConnect(CONFIG.chain.rpcHttp, CONFIG.chain.rpcWs);
-
-    // 2. If failed, switch to fallback
-    if (!primaryOk) {
-      console.warn(`[Wallet] Switching to public fallbacks due to primary failure...`);
-      const fallbackOk = await tryConnect(fallbackHttp, fallbackWs);
-
-      if (!fallbackOk) {
-        console.error(`[Wallet] CRITICAL: Even public fallback RPC failed. Check your internet connection.`);
-        throw new Error('No working RPC found');
+    // 1. Try primary
+    if (await tryConnect(CONFIG.chain.rpcHttp, CONFIG.chain.rpcWs)) {
+      console.log(`[Wallet] Primary RPC connected ✓`);
+    } else {
+      // 2. Cycle through fallbacks
+      console.warn(`[Wallet] Primary failed. Cycling through public fallbacks...`);
+      let found = false;
+      for (let i = 0; i < PUBLIC_HTTP_FALLBACKS.length; i++) {
+        if (await tryConnect(PUBLIC_HTTP_FALLBACKS[i], PUBLIC_WS_FALLBACKS[i])) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        throw new Error('All RPC providers exhausted');
       }
     }
 
-    // 3. Re-init signer and contract with whichever provider is now active
     this.signer = new ethers.Wallet(CONFIG.wallet.privateKey, this.httpProvider);
     this.contract = new ethers.Contract(CONFIG.wallet.contractAddress, ARB_BOT_ABI, this.signer);
     console.log(`[Wallet] RPC initialization complete ✓`);
@@ -143,6 +165,8 @@ export class WalletManager {
   }
 
   reconnectWs(): void {
-    this.provider = new ethers.WebSocketProvider(CONFIG.chain.rpcWs, 8453, { staticNetwork: true });
+    if (this.provider) try { this.provider.destroy(); } catch { }
+    this.provider = new ethers.WebSocketProvider(this.workingWs, 8453, { staticNetwork: true });
+    console.log(`[Wallet] Reconnecting WS to: ${this.workingWs.split('//')[1]?.split('/')[0]}`);
   }
 }

@@ -247,41 +247,52 @@ export class Scanner {
   private async fetchPrice(dexName: string, type: DexType, poolAddr: string, tokenOut: string): Promise<number | null> {
     try {
       const dec = await this.getDecimals(tokenOut);
-      const pool = new ethers.Contract(poolAddr, [], this.wallet.provider); // Minimal for call
 
       if (type === DexType.UNISWAP_V3) {
         const v3pool = new ethers.Contract(poolAddr, UNI_V3_POOL_ABI, this.wallet.provider);
         const slot0 = await v3pool.slot0();
         const sqrtPriceX96 = slot0[0];
         const token0 = await v3pool.token0();
+
         const Q96 = BigInt(2) ** BigInt(96);
         const p = Number(sqrtPriceX96) / Number(Q96);
-        let price = p * p;
+        let rate = p * p; // token1 per token0
+
         const dec0 = await this.getDecimals(token0);
         const dec1 = dec;
-        price = price * (10 ** (Number(dec0) - Number(dec1)));
-        if (token0.toLowerCase() !== CONFIG.tokens.USDC.toLowerCase()) price = 1 / price;
-        return price;
-      }
-      else if (type === DexType.UNISWAP_V2 || type === DexType.AERODROME) {
-        if (type === DexType.AERODROME) {
-          const router = new ethers.Contract(CONFIG.dexes.aerodromeRouter, AERO_ROUTER_ABI, this.wallet.provider);
-          const amountIn = ethers.parseUnits('1', 6);
-          const routes = [{ from: CONFIG.tokens.USDC, to: tokenOut, stable: false, factory: CONFIG.dexes.aerodromeFactory }];
-          const amounts = await router.getAmountsOut(amountIn, routes);
-          return Number(ethers.formatUnits(amounts[amounts.length - 1], dec));
-        } else {
-          const v2pool = new ethers.Contract(poolAddr, ['function token0() view returns (address)', 'function getReserves() view returns (uint112, uint112, uint32)'], this.wallet.provider);
-          const token0 = await v2pool.token0();
-          const [r0, r1] = await v2pool.getReserves();
 
-          let price;
-          if (token0.toLowerCase() === CONFIG.tokens.USDC.toLowerCase()) {
-            price = Number(r1) / Number(r0) * (10 ** (6 - dec));
-          } else {
-            price = Number(r0) / Number(r1) * (10 ** (6 - dec));
-          }
-          return price;
+        const adjustedRate = rate * (10 ** (Number(dec0) - Number(dec1)));
+
+        if (token0.toLowerCase() === CONFIG.tokens.USDC.toLowerCase()) {
+          return 1 / adjustedRate;
+        } else {
+          return adjustedRate;
+        }
+      }
+      else if (type === DexType.AERODROME) {
+        const router = new ethers.Contract(CONFIG.dexes.aerodromeRouter, AERO_ROUTER_ABI, this.wallet.provider);
+        const amountIn = ethers.parseUnits('1', dec);
+        const routes = [{
+          from: tokenOut,
+          to: CONFIG.tokens.USDC,
+          stable: false,
+          factory: CONFIG.dexes.aerodromeFactory
+        }];
+        const amounts = await router.getAmountsOut(amountIn, routes);
+        return Number(ethers.formatUnits(amounts[amounts.length - 1], 6));
+      }
+      else if (type === DexType.UNISWAP_V2) {
+        const v2pool = new ethers.Contract(poolAddr, [
+          'function token0() view returns (address)',
+          'function getReserves() view returns (uint112, uint112, uint32)'
+        ], this.wallet.provider);
+        const token0 = await v2pool.token0();
+        const [r0, r1] = await v2pool.getReserves();
+
+        if (token0.toLowerCase() === CONFIG.tokens.USDC.toLowerCase()) {
+          return (Number(r0) / Number(r1)) * (10 ** (dec - 6));
+        } else {
+          return (Number(r1) / Number(r0)) * (10 ** (dec - 6));
         }
       }
     } catch { return null; }

@@ -32,8 +32,10 @@ interface IAerodromeRouter {
     function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, Route[] calldata routes, address to, uint256 deadline) external returns (uint256[] memory amounts);
 }
 
-contract ArbBot is IFlashLoanSimpleReceiver {
-    address public immutable owner;
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+contract ArbBot is IFlashLoanSimpleReceiver, Ownable, ReentrancyGuard {
     IAavePool  constant AAVE_POOL  = IAavePool(0xA238Dd80C259a72e81d7e4664a9801593F98d1c5);
     address constant USDC          = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
 
@@ -50,8 +52,7 @@ contract ArbBot is IFlashLoanSimpleReceiver {
     event ArbitrageExecuted(address tokenOut, uint256 profit, address router1, address router2);
     event ProfitWithdrawn(address token, uint256 amount);
 
-    modifier onlyOwner() { require(msg.sender == owner, "Not owner"); _; }
-    constructor() { owner = msg.sender; }
+    constructor() Ownable(msg.sender) {}
 
     function startArbitrage(
         address tokenOut, 
@@ -70,7 +71,7 @@ contract ArbBot is IFlashLoanSimpleReceiver {
         uint256 premium, 
         address initiator, 
         bytes calldata params
-    ) external override returns (bool) {
+    ) external override nonReentrant returns (bool) {
         require(msg.sender == address(AAVE_POOL), "Untrusted caller");
         require(initiator == address(this), "Untrusted initiator");
 
@@ -132,16 +133,23 @@ contract ArbBot is IFlashLoanSimpleReceiver {
         }
     }
 
-    function withdrawToken(address token) external onlyOwner {
+    function sweep(address token) external onlyOwner nonReentrant {
         uint256 bal = IERC20(token).balanceOf(address(this));
-        require(bal > 0, "Nothing to withdraw");
-        IERC20(token).transfer(owner, bal);
+        require(bal > 0, "Nothing to sweep");
+        IERC20(token).transfer(owner(), bal);
         emit ProfitWithdrawn(token, bal);
     }
 
-    function withdrawEth() external onlyOwner {
+    function withdrawToken(address token) external onlyOwner nonReentrant {
+        uint256 bal = IERC20(token).balanceOf(address(this));
+        require(bal > 0, "Nothing to withdraw");
+        IERC20(token).transfer(owner(), bal);
+        emit ProfitWithdrawn(token, bal);
+    }
+
+    function withdrawEth() external onlyOwner nonReentrant {
         uint256 balance = address(this).balance;
-        (bool success, ) = payable(owner).call{value: balance}("");
+        (bool success, ) = payable(owner()).call{value: balance}("");
         require(success, "ETH transfer failed");
     }
 

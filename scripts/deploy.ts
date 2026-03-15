@@ -95,6 +95,7 @@ async function main() {
     console.log('⏳ Deploying ArbBot to Base Mainnet...');
 
     const factory = new ethers.ContractFactory(abi, bytecode, signer);
+    // Note: ArbBot constructor has no args, but if we add any, we should normalize them here.
     const contract = await factory.deploy();
     await contract.waitForDeployment();
 

@@ -63,21 +63,31 @@ export class Scanner {
   }
 
   private async initDexPools(pair: WatchPair): Promise<void> {
-    const dexConfigs = [
-      { name: 'uniswapV3', type: DexType.UNISWAP_V3, factory: CONFIG.dexes.uniswapV3Factory, router: CONFIG.dexes.uniswapV3Router },
-      { name: 'aerodrome', type: DexType.AERODROME, factory: CONFIG.dexes.aerodromeFactory, router: CONFIG.dexes.aerodromeRouter },
-      { name: 'baseSwap', type: DexType.UNISWAP_V2, factory: CONFIG.dexes.baseSwapFactory, router: CONFIG.dexes.baseSwapRouter },
-      { name: 'swapBased', type: DexType.UNISWAP_V2, factory: CONFIG.dexes.swapBasedFactory, router: CONFIG.dexes.swapBasedRouter },
-      { name: 'pancakeV3', type: DexType.UNISWAP_V3, factory: CONFIG.dexes.pancakeV3Factory, router: CONFIG.dexes.pancakeV3Router },
-    ];
+    const dexConfigs: any[] = [];
+    
+    // Dynamically build dexConfigs from CONFIG.dexes
+    for (const [key, value] of Object.entries(CONFIG.dexes)) {
+      if (key.endsWith('Factory')) {
+        const baseName = key.replace('Factory', '');
+        const type = baseName.includes('V3') ? (baseName.includes('camelot') ? DexType.ALGEBRA : DexType.UNISWAP_V3) : 
+                     (baseName.includes('aerodrome') || baseName.includes('ramses') ? DexType.SOLIDLY : DexType.UNISWAP_V2);
+        
+        dexConfigs.push({
+          name: baseName,
+          type: type,
+          factory: value,
+          router: (CONFIG.dexes as any)[`${baseName}Router`]
+        });
+      }
+    }
 
     for (const dex of dexConfigs) {
       try {
         let poolAddr = ethers.ZeroAddress;
-        if (dex.type === DexType.UNISWAP_V3) {
+        if (dex.type === DexType.UNISWAP_V3 || dex.type === DexType.ALGEBRA) {
           const factory = new ethers.Contract(dex.factory, UNI_V3_FACTORY_ABI, this.wallet.provider);
           poolAddr = await factory.getPool(CONFIG.tokens.USDC, pair.tokenOut, pair.fee);
-        } else if (dex.type === DexType.AERODROME) {
+        } else if (dex.type === DexType.SOLIDLY) {
           const factory = new ethers.Contract(dex.factory, AERO_FACTORY_ABI, this.wallet.provider);
           poolAddr = await factory.getPool(CONFIG.tokens.USDC, pair.tokenOut, false);
           if (poolAddr === ethers.ZeroAddress) poolAddr = await factory.getPool(CONFIG.tokens.USDC, pair.tokenOut, true);
@@ -94,7 +104,7 @@ export class Scanner {
           if (isV3) {
             // Bypass liquidity check for V3 — tick-based liquidity is complex
             liquidityUsdc = CONFIG.arb.flashLoanAmount * 100;
-          } else if (dex.type === DexType.UNISWAP_V2 || dex.type === DexType.AERODROME) {
+          } else if (dex.type === DexType.UNISWAP_V2 || dex.type === DexType.SOLIDLY) {
             const v2pool = new ethers.Contract(poolAddr, [
               'function token0() view returns (address)',
               'function getReserves() view returns (uint112, uint112, uint32)'
@@ -125,13 +135,13 @@ export class Scanner {
   }
 
   private setupPoolSubscription(dexName: string, type: DexType, poolAddr: string, pair: WatchPair): void {
-    const abi = type === DexType.UNISWAP_V3 ? UNI_V3_POOL_ABI : (type === DexType.AERODROME ? AERO_POOL_ABI : UNI_V2_POOL_ABI);
+    const abi = type === DexType.UNISWAP_V3 ? UNI_V3_POOL_ABI : (type === DexType.SOLIDLY ? AERO_POOL_ABI : UNI_V2_POOL_ABI);
     const contract = new ethers.Contract(poolAddr, abi, this.wallet.provider);
     this.poolContracts.set(`${dexName}_${pair.tokenOut}`, contract);
 
-    const topic = type === DexType.UNISWAP_V3
+    const topic = (type === DexType.UNISWAP_V3 || type === DexType.ALGEBRA)
       ? ethers.id('Swap(address,address,int256,int256,uint160,uint128,int24)')
-      : (type === DexType.AERODROME
+      : (type === DexType.SOLIDLY
         ? ethers.id('Swap(address,address,uint256,uint256,uint256,uint256)')
         : ethers.id('Swap(address,uint256,uint256,uint256,uint256,address)'));
 
@@ -158,7 +168,7 @@ export class Scanner {
 
   private async checkSurfaces(tokenOut: string): Promise<void> {
     this.cycleCount++;
-    const pair = CONFIG.scanner.watchPairs.find(p => p.tokenOut.toLowerCase() === tokenOut.toLowerCase());
+    const pair = CONFIG.scanner.watchPairs.find((p: WatchPair) => p.tokenOut.toLowerCase() === tokenOut.toLowerCase());
     if (!pair) return;
 
     for (const surface of CONFIG.scanner.surfaces) {
@@ -229,21 +239,21 @@ export class Scanner {
 
   private buildSwapLeg(dexName: string, tokenOut: string, defaultFee: number): SwapLeg {
     const config = (CONFIG.dexes as any);
-    if (dexName.includes('uniswapV3') || dexName.includes('pancakeV3')) {
+    if (dexName.includes('V3') || dexName.includes('camelot')) {
       return {
         router: config[`${dexName}Router`],
-        dexType: DexType.UNISWAP_V3,
+        dexType: dexName.includes('camelot') ? DexType.ALGEBRA : DexType.UNISWAP_V3,
         fee: defaultFee,
         stable: false,
         factory: ethers.ZeroAddress
       };
-    } else if (dexName === 'aerodrome') {
+    } else if (dexName.includes('aerodrome') || dexName.includes('ramses')) {
       return {
-        router: CONFIG.dexes.aerodromeRouter,
-        dexType: DexType.AERODROME,
+        router: config[`${dexName}Router`],
+        dexType: DexType.SOLIDLY,
         fee: 0,
-        stable: false, // Assume volatile for now - leg logic in contract handles fallbacks
-        factory: CONFIG.dexes.aerodromeFactory
+        stable: false, 
+        factory: config[`${dexName}Factory`]
       };
     } else { // V2
       return {
@@ -257,8 +267,8 @@ export class Scanner {
   }
 
   private getDexFeeBps(dexName: string): number {
-    if (dexName.includes('V3')) return 30; // 0.3% default
-    if (dexName === 'aerodrome') return 20; // 0.2% volatile
+    if (dexName.toLowerCase().includes('v3') || dexName.toLowerCase().includes('camelot')) return 30; // 0.3% default
+    if (dexName.toLowerCase().includes('aerodrome') || dexName.toLowerCase().includes('ramses')) return 20; // 0.2% volatile
     return 30; // V2 default
   }
 
@@ -266,7 +276,7 @@ export class Scanner {
     try {
       const amountInBig = typeof amountIn === 'bigint' ? amountIn : ethers.parseUnits(amountIn.toString(), tokenIn === CONFIG.tokens.USDC ? 6 : (DECIMALS_CACHE.get(tokenIn) || 18));
       
-      if (dexName.includes('uniswapV3') || dexName.includes('pancakeV3')) {
+      if (dexName.includes('V3') || (dexName.includes('camelot') && CONFIG.chain.chainId === 42161)) {
         const quoter = new ethers.Contract(CONFIG.dexes.uniswapV3QuoterV2, UNI_V3_QUOTER_V2_ABI, this.wallet.provider);
         const params = {
           tokenIn,
@@ -278,13 +288,15 @@ export class Scanner {
         const quote = await quoter.quoteExactInputSingle.staticCall(params);
         return quote.amountOut;
       } 
-      else if (dexName === 'aerodrome') {
-        const router = new ethers.Contract(CONFIG.dexes.aerodromeRouter, AERO_ROUTER_ABI, this.wallet.provider);
+      else if (dexName.includes('aerodrome') || dexName.includes('ramses')) {
+        const routerAddr = (CONFIG.dexes as any)[`${dexName}Router`];
+        const factoryAddr = (CONFIG.dexes as any)[`${dexName}Factory`];
+        const router = new ethers.Contract(routerAddr, AERO_ROUTER_ABI, this.wallet.provider);
         const routes = [{
           from: tokenIn,
           to: tokenOut,
           stable: false,
-          factory: CONFIG.dexes.aerodromeFactory
+          factory: factoryAddr
         }];
         const amounts = await router.getAmountsOut(amountInBig, routes);
         return amounts[amounts.length - 1];
@@ -327,14 +339,16 @@ export class Scanner {
           return adjustedRate;
         }
       }
-      else if (type === DexType.AERODROME) {
-        const router = new ethers.Contract(CONFIG.dexes.aerodromeRouter, AERO_ROUTER_ABI, this.wallet.provider);
+      else if (type === DexType.SOLIDLY) {
+        const routerAddr = (CONFIG.dexes as any)[`${dexName}Router`];
+        const factoryAddr = (CONFIG.dexes as any)[`${dexName}Factory`];
+        const router = new ethers.Contract(routerAddr, AERO_ROUTER_ABI, this.wallet.provider);
         const amountIn = ethers.parseUnits('1', dec);
         const routes = [{
           from: tokenOut,
           to: CONFIG.tokens.USDC,
           stable: false,
-          factory: CONFIG.dexes.aerodromeFactory
+          factory: factoryAddr
         }];
         const amounts = await router.getAmountsOut(amountIn, routes);
         return Number(ethers.formatUnits(amounts[amounts.length - 1], 6));

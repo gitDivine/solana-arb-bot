@@ -16,17 +16,16 @@ const ERC20_ABI = [
   'function decimals() view returns (uint8)',
 ];
 
-const PUBLIC_HTTP_FALLBACKS = [
-  'https://mainnet.base.org',
-  'https://base.publicnode.com',
-  'https://1rpc.io/base'
-];
+// Public fallbacks (will be refined per chain in a future update or kept generic)
+const PUBLIC_HTTP_FALLBACKS: Record<number, string[]> = {
+  8453: ['https://mainnet.base.org', 'https://base.publicnode.com', 'https://1rpc.io/base'],
+  42161: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum.public-rpc.com', 'https://1rpc.io/arbitrum']
+};
 
-const PUBLIC_WS_FALLBACKS = [
-  'wss://base.publicnode.com',
-  'wss://mainnet.base.org/ws',
-  'wss://base.drpc.org'
-];
+const PUBLIC_WS_FALLBACKS: Record<number, string[]> = {
+  8453: ['wss://base.publicnode.com', 'wss://mainnet.base.org/ws'],
+  42161: ['wss://arb1.arbitrum.io/feed', 'wss://arbitrum.publicnode.com']
+};
 
 export class WalletManager {
   public provider: ethers.WebSocketProvider;
@@ -37,10 +36,9 @@ export class WalletManager {
   private workingHttp: string = CONFIG.chain.rpcHttp;
 
   constructor() {
-    // Initial dummy providers that will be swapped in validateAndSwitchRpc
-    this.httpProvider = new ethers.JsonRpcProvider(CONFIG.chain.rpcHttp, 8453, { staticNetwork: true });
+    this.httpProvider = new ethers.JsonRpcProvider(CONFIG.chain.rpcHttp, CONFIG.chain.chainId, { staticNetwork: true });
     this.signer = new ethers.Wallet(CONFIG.wallet.privateKey, this.httpProvider);
-    this.contract = new ethers.Contract(CONFIG.wallet.contractAddress, ARB_BOT_ABI, this.signer);
+    this.contract = new ethers.Contract(CONFIG.wallet.contractAddress || ethers.ZeroAddress, ARB_BOT_ABI, this.signer);
     this.provider = null as any;
   }
 
@@ -49,8 +47,8 @@ export class WalletManager {
       let tempWs: ethers.WebSocketProvider | null = null;
       try {
         const hostHttp = http.split('//')[1]?.split('/')[0] || 'RPC';
-        console.log(`[Wallet] Probing HTTP RPC: ${hostHttp}...`);
-        const tempHttp = new ethers.JsonRpcProvider(http, 8453, { staticNetwork: true });
+        console.log(`[Wallet] Probing ${CONFIG.chain.name} HTTP RPC: ${hostHttp}...`);
+        const tempHttp = new ethers.JsonRpcProvider(http, CONFIG.chain.chainId, { staticNetwork: true });
 
         await Promise.race([
           tempHttp.getBlockNumber(),
@@ -58,8 +56,8 @@ export class WalletManager {
         ]);
 
         const hostWs = ws.split('//')[1]?.split('/')[0] || 'WS';
-        console.log(`[Wallet] Probing WebSocket RPC: ${hostWs}...`);
-        tempWs = new ethers.WebSocketProvider(ws, 8453, { staticNetwork: true });
+        console.log(`[Wallet] Probing ${CONFIG.chain.name} WebSocket RPC: ${hostWs}...`);
+        tempWs = new ethers.WebSocketProvider(ws, CONFIG.chain.chainId, { staticNetwork: true });
         tempWs.on('error', () => { });
 
         await Promise.race([
@@ -86,8 +84,11 @@ export class WalletManager {
       // 2. Cycle through fallbacks
       console.warn(`[Wallet] Primary failed. Cycling through public fallbacks...`);
       let found = false;
-      for (let i = 0; i < PUBLIC_HTTP_FALLBACKS.length; i++) {
-        if (await tryConnect(PUBLIC_HTTP_FALLBACKS[i], PUBLIC_WS_FALLBACKS[i])) {
+      const httpFallbacks = PUBLIC_HTTP_FALLBACKS[CONFIG.chain.chainId] || [];
+      const wsFallbacks = PUBLIC_WS_FALLBACKS[CONFIG.chain.chainId] || [];
+      
+      for (let i = 0; i < httpFallbacks.length; i++) {
+        if (await tryConnect(httpFallbacks[i], wsFallbacks[i] || wsFallbacks[0])) {
           found = true;
           break;
         }
@@ -152,7 +153,7 @@ export class WalletManager {
 
   reconnectWs(): void {
     if (this.provider) try { this.provider.destroy(); } catch { }
-    this.provider = new ethers.WebSocketProvider(this.workingWs, 8453, { staticNetwork: true });
+    this.provider = new ethers.WebSocketProvider(this.workingWs, CONFIG.chain.chainId, { staticNetwork: true });
     console.log(`[Wallet] Reconnecting WS to: ${this.workingWs.split('//')[1]?.split('/')[0]}`);
   }
 }

@@ -32,27 +32,38 @@ interface IAerodromeRouter {
     function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, Route[] calldata routes, address to, uint256 deadline) external returns (uint256[] memory amounts);
 }
 
+interface IAlgebraRouter {
+    struct ExactInputSingleParams {
+        address tokenIn; address tokenOut; address recipient; uint256 deadline;
+        uint256 amountIn; uint256 amountOutMinimum; uint160 sqrtPriceLimitX96;
+    }
+    function exactInputSingle(ExactInputSingleParams calldata params) external returns (uint256 amountOut);
+}
+
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 contract ArbBot is IFlashLoanSimpleReceiver, Ownable, ReentrancyGuard {
-    IAavePool  constant AAVE_POOL  = IAavePool(0xA238Dd80C259a72e81d7e4664a9801593F98d1c5);
-    address constant USDC          = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    IAavePool  public immutable AAVE_POOL;
+    address    public immutable USDC;
 
-    enum DexType { UNISWAP_V2, UNISWAP_V3, AERODROME }
+    enum DexType { UNISWAP_V2, UNISWAP_V3, SOLIDLY, ALGEBRA }
 
     struct SwapLeg {
         address router;
         DexType dexType;
-        uint24 fee;     // For V3 (e.g. 500, 3000)
-        bool stable;    // For Aerodrome
-        address factory; // For Aerodrome route
+        uint24 fee;     // For V3
+        bool stable;    // For Solidly
+        address factory; // For Solidly
     }
 
     event ArbitrageExecuted(address tokenOut, uint256 profit, address router1, address router2);
     event ProfitWithdrawn(address token, uint256 amount);
 
-    constructor() Ownable(msg.sender) {}
+    constructor(address _pool, address _usdc) Ownable(msg.sender) {
+        AAVE_POOL = IAavePool(_pool);
+        USDC = _usdc;
+    }
 
     function startArbitrage(
         address tokenOut, 
@@ -109,7 +120,18 @@ contract ArbBot is IFlashLoanSimpleReceiver, Ownable, ReentrancyGuard {
                 sqrtPriceLimitX96: 0
             }));
         } 
-        else if (leg.dexType == DexType.AERODROME) {
+        else if (leg.dexType == DexType.ALGEBRA) {
+            return IAlgebraRouter(leg.router).exactInputSingle(IAlgebraRouter.ExactInputSingleParams({
+                tokenIn: from,
+                tokenOut: to,
+                recipient: address(this),
+                deadline: block.timestamp + 60,
+                amountIn: amountIn,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            }));
+        }
+        else if (leg.dexType == DexType.SOLIDLY) {
             IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
             routes[0] = IAerodromeRouter.Route({ 
                 from: from, 

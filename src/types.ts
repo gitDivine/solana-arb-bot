@@ -5,7 +5,7 @@ export interface WatchPair {
   name: string;
 }
 
-export enum DexType { UNISWAP_V2, UNISWAP_V3, AERODROME }
+export enum DexType { UNISWAP_V2, UNISWAP_V3, SOLIDLY, ALGEBRA }
 
 export interface SwapLeg {
   router: string;

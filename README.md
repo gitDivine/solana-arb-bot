@@ -104,13 +104,14 @@ Swap event detected → Compare prices on Uni vs Aero
 → Repay loan + keep profit — all in one transaction
 ```
 
-## Safety Features
+## Safety & Hardening 🛡️
 
-- **Net profit math** — only fires when profitable after all fees
-- **Price cross-validation** — rejects broken price feeds (>2x mismatch)
-- **Gap sanity check** — blocks insane gaps >500bps
-- **Dry run mode** — set `DRY_RUN=true` in `.env` to simulate without spending gas
-- **Volatile/stable fallback** — contract auto-routes through correct Aerodrome pool
+- **Smart Contract Hardening**: Inherits from OpenZeppelin `ReentrancyGuard` and `Ownable` for professional-grade security.
+- **Reentrancy Protection**: Prevents malicious contract interactions from draining funds during swaps.
+- **Access Control**: Standardized `onlyOwner` modifiers on all administrative functions.
+- **Net Profit Math**: Filters opportunities to ensure they cover all fees + slippage.
+- **Price Cross-Validation**: Prevents firing on broken or manipulated price feeds.
+- **Dry Run Mode**: Toggle `DRY_RUN=true` in `.env` to simulate without risk.
 
 ## Environment Variables
 

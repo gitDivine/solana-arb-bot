@@ -13,6 +13,9 @@ import { execSync } from 'child_process';
 function autoUpdate(): void {
   try {
     console.log('[Update] Checking for updates...');
+    // Safety: Reset files modified by npm install before pulling
+    try { execSync('git checkout package.json package-lock.json', { timeout: 5000 }); } catch {}
+    
     const pullResultRaw = execSync('git pull', { encoding: 'utf8', timeout: 15000 });
     const pullResult = pullResultRaw.trim();
     console.log(`[Update] ${pullResult}`);

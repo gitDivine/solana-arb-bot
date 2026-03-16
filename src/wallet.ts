@@ -19,12 +19,12 @@ const ERC20_ABI = [
 // Public fallbacks (will be refined per chain in a future update or kept generic)
 const PUBLIC_HTTP_FALLBACKS: Record<number, string[]> = {
   8453: ['https://mainnet.base.org', 'https://base.publicnode.com', 'https://1rpc.io/base'],
-  42161: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum.public-rpc.com', 'https://1rpc.io/arbitrum']
+  42161: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum.public-rpc.com', 'https://arbitrum.gateway.tenderly.co']
 };
 
 const PUBLIC_WS_FALLBACKS: Record<number, string[]> = {
   8453: ['wss://base.publicnode.com', 'wss://mainnet.base.org/ws'],
-  42161: ['wss://arb1.arbitrum.io/feed', 'wss://arbitrum.publicnode.com']
+  42161: ['wss://arbitrum-one-rpc.publicnode.com', 'wss://arbitrum.gateway.tenderly.co/ws']
 };
 
 export class WalletManager {

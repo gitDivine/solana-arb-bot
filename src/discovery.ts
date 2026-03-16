@@ -7,12 +7,8 @@ import { TokenInfo } from './types';
 import { Logger } from './logger';
 import { RateLimiter } from './rate-limiter';
 
-// Well-known Base tokens to always watch (in addition to discovered ones)
-const BASE_SEED_TOKENS = [
-  CONFIG.tokens.DAI,
-  CONFIG.tokens.AERO,
-  CONFIG.tokens.WELL,
-];
+// Well-known tokens to always watch
+const SEED_TOKENS = CONFIG.scanner.watchPairs.map(p => p.tokenOut);
 
 export class Discovery {
   private logger: Logger;
@@ -25,16 +21,18 @@ export class Discovery {
   }
 
   async run(): Promise<TokenInfo[]> {
-    this.logger.info('Discovery', 'Scanning Base tokens via DexScreener...');
+    this.logger.info('Discovery', `Scanning ${CONFIG.chain.name} tokens via DexScreener...`);
     let added = 0;
 
-    for (const address of BASE_SEED_TOKENS) {
+    for (const address of SEED_TOKENS) {
       try {
         await this.rateLimiter.throttle();
         const res = await axios.get(`${CONFIG.discovery.dexScreenerUrl}${address}`, { timeout: 5000 });
+        const chainName = CONFIG.chain.chainId === 42161 ? 'arbitrum' : 'base';
+        
         const pairs = (res.data?.pairs || []).filter((p: any) =>
-          p.chainId === 'base' &&
-          (p.dexId === 'uniswap' || p.dexId === 'aerodrome') &&
+          p.chainId === chainName &&
+          (p.dexId === 'uniswap' || p.dexId === 'aerodrome' || p.dexId === 'camelot-v3' || p.dexId === 'ramses-v2') &&
           parseFloat(p.volume?.h24 || 0) >= CONFIG.discovery.minDailyVolumeUsd &&
           parseFloat(p.liquidity?.usd || 0) >= CONFIG.discovery.minLiquidityUsd
         );

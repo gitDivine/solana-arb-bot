@@ -46,10 +46,9 @@ async function startBot(retryCount = 0): Promise<void> {
     const discovery = new Discovery(logger, rateLimiter);
 
     console.log('\n  ╔══════════════════════════════════════╗');
-    console.log('  ║   Base Flash Loan Arbitrage Bot v1   ║');
-    console.log('  ║   Chain: Base Mainnet                ║');
-    console.log('  ║   DEXes: Uniswap V3 + Aerodrome      ║');
-    console.log('  ║   Loans: Aave V3 (zero capital)      ║');
+    console.log(`  ║   Multi-Chain Arb Bot v1.1           ║`);
+    console.log(`  ║   Chain: ${CONFIG.chain.name.padEnd(26)}  ║`);
+    console.log(`  ║   Loans: Aave V3 (FlashLoans)        ║`);
     console.log('  ╚══════════════════════════════════════╝\n');
 
     // Show wallet info
@@ -69,7 +68,7 @@ async function startBot(retryCount = 0): Promise<void> {
     // Start WebSocket scanner
     await scanner.start();
 
-    logger.success('Bot', `Live on Base. Listening for price gaps >= ${CONFIG.arb.minProfitBps}bps`);
+    logger.success('Bot', `Live on ${CONFIG.chain.name}. Listening for price gaps >= ${CONFIG.arb.minProfitBps}bps`);
 
     // Stats loop
     setInterval(async () => {
@@ -81,9 +80,9 @@ async function startBot(retryCount = 0): Promise<void> {
     const msg = err.message || String(err);
     if ((msg.includes('429') || msg.includes('limit exceeded') || msg.includes('405')) && retryCount < 3) {
       console.warn(`[Startup] RPC Issue detected (Attempt ${retryCount + 1}). Retrying with public fallback...`);
-      // Force change the config for this attempt
-      (CONFIG.chain as any).rpcHttp = 'https://mainnet.base.org';
-      (CONFIG.chain as any).rpcWs = 'wss://base.publicnode.com';
+      // Use config fallbacks
+      (CONFIG.chain as any).rpcHttp = CONFIG.chain.rpcHttp;
+      (CONFIG.chain as any).rpcWs = CONFIG.chain.rpcWs;
       return startBot(retryCount + 1);
     }
     throw err;

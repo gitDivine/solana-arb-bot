@@ -58,7 +58,7 @@ export class Scanner {
       await this.initDexPools(pair);
     }
 
-    this.logger.success('Scanner', `Watching ${this.poolContracts.size} pools across Base`);
+    this.logger.success('Scanner', `Watching ${this.poolContracts.size} pools across ${CONFIG.chain.name}`);
     this.startReconnectWatchdog();
   }
 

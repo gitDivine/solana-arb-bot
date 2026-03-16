@@ -3,12 +3,12 @@
 
 import axios from 'axios';
 import { CONFIG } from './config';
-import { TokenInfo } from './types';
+import { TokenInfo, WatchPair } from './types';
 import { Logger } from './logger';
 import { RateLimiter } from './rate-limiter';
 
 // Well-known tokens to always watch
-const SEED_TOKENS = CONFIG.scanner.watchPairs.map(p => p.tokenOut);
+const SEED_TOKENS = CONFIG.scanner.watchPairs.map((p: WatchPair) => p.tokenOut);
 
 export class Discovery {
   private logger: Logger;
